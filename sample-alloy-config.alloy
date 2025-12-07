@@ -1,0 +1,116 @@
+// Alloy configuration for collecting JSON logs and sending to Loki
+// This configuration captures logs from the trace-test-app and forwards them to Loki
+
+// Discover Kubernetes pods with specific labels
+discovery.kubernetes "pods" {
+  role = "pod"
+  namespaces {
+    names = ["default"]
+  }
+}
+
+// Relabel discovered targets to filter for trace-test-app
+discovery.relabel "trace_test_app" {
+  targets = discovery.kubernetes.pods.targets
+
+  // Keep only pods with app=trace-test label
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app"]
+    regex         = "trace-test"
+    action        = "keep"
+  }
+
+  // Set the pod name as a label
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+
+  // Set the namespace as a label
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+
+  // Set the container name as a label
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label  = "container"
+  }
+
+  // Set the node name as a label
+  rule {
+    source_labels = ["__meta_kubernetes_pod_node_name"]
+    target_label  = "node"
+  }
+}
+
+// Source logs from discovered pods
+loki.source.kubernetes "trace_test_logs" {
+  targets    = discovery.relabel.trace_test_app.output
+  forward_to = [loki.process.json_parser.receiver]
+}
+
+// Process and parse JSON logs
+loki.process "json_parser" {
+  // Parse JSON log lines
+  stage.json {
+    expressions = {
+      level       = "levelname",
+      timestamp   = "asctime",
+      message     = "message",
+      name        = "name",
+      component   = "component",
+      operation   = "operation",
+      item_id     = "item_id",
+      trace_id    = "trace_id",
+      span_id     = "span_id",
+      error_type  = "error_type",
+      endpoint    = "endpoint",
+      method      = "method",
+      user_id     = "user_id",
+      environment = "environment",
+    }
+  }
+
+  // Convert level to lowercase for consistency
+  stage.template {
+    source   = "level"
+    template = "{{ ToLower .Value }}"
+  }
+
+  // Set the log level as a label
+  stage.labels {
+    values = {
+      level     = "level",
+      component = "component",
+      operation = "operation",
+    }
+  }
+
+  // Use the parsed timestamp
+  stage.timestamp {
+    source = "timestamp"
+    format = "2006-01-02 15:04:05,000"
+  }
+
+  forward_to = [loki.write.local_loki.receiver]
+}
+
+// Write logs to Loki
+loki.write "local_loki" {
+  endpoint {
+    url = "http://loki.loki.svc:3100/loki/api/v1/push"
+
+    // Optional: Add basic auth if required
+    // basic_auth {
+    //   username = "user"
+    //   password = "pass"
+    // }
+  }
+
+  external_labels = {
+    cluster = "demo-cluster",
+    job     = "trace-test-app",
+  }
+}
