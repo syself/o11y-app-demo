@@ -10,6 +10,7 @@ import random
 import threading
 import logging
 import sys
+import os
 from flask import Flask, Response, request
 from prometheus_client import Counter, Gauge, Histogram, Summary, generate_latest, CONTENT_TYPE_LATEST
 from opentelemetry import trace
@@ -19,10 +20,20 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.resources import Resource
 from pythonjsonlogger import jsonlogger
 
+# Get Kubernetes node name from environment variable
+K8S_NODE_NAME = os.getenv('K8S_NODE_NAME', 'unknown')
+
 # Configure JSON logging
 logger = logging.getLogger()
 logHandler = logging.StreamHandler(sys.stdout)
-formatter = jsonlogger.JsonFormatter(
+
+# Custom JSON formatter that includes k8s_node_name in all logs
+class CustomJsonFormatter(jsonlogger.JsonFormatter):
+    def add_fields(self, log_record, record, message_dict):
+        super(CustomJsonFormatter, self).add_fields(log_record, record, message_dict)
+        log_record['k8s_node_name'] = K8S_NODE_NAME
+
+formatter = CustomJsonFormatter(
     '%(asctime)s %(name)s %(levelname)s %(message)s',
     timestamp=True
 )
